@@ -10,15 +10,81 @@
 #include <stdio.h>
 #include <string.h>
 #include <avr/interrupt.h>
+#include <new.h>
 
 #include "w5100.h"
 
-// W5100 controller instance
-W5200Module W5100;
+// W5x00 controller instance, do not access before calling initialise_wiznet_instance()
+const size_t sizeof_wiznetmodule = max(sizeof(W5100Module), sizeof(W5200Module));
+uint8_t _w5100_storage[sizeof_wiznetmodule];
+WiznetModule &W5100 = *((WiznetModule *)_w5100_storage);
+
+void initialise_wiznet_instance() {
+  // This is pretty hacky. In order to avoid changing W5100 to a
+  // pointer type we just copy our heap-allocated WiznetModule
+  // instance into the W5100 object's storage space, then delete the
+  // heap-allocated version.
+  Serial.println("initialise_wiznet_instance");
+  WiznetModule *w5100_ptr = WiznetModule::autodetect();
+  memcpy(_w5100_storage, w5100_ptr, sizeof(WiznetModule));
+  delete w5100_ptr;
+}
+
+const uint8_t W5200_WRITE_FLAG = 0x80;
+const uint8_t W5200_READ_FLAG = 0x00;
+
+const uint8_t W5100_WRITE_FLAG = 0xF0;
+const uint8_t W5100_READ_FLAG = 0x0F;
 
 #define TX_RX_MAX_BUF_SIZE 2048
 #define TX_BUF 0x1100
 #define RX_BUF (TX_BUF + TX_RX_MAX_BUF_SIZE)
+
+WiznetModule *WiznetModule::autodetect()
+{
+  /* Method
+   *
+   * Start by assuming we have a W5100, set the reset bit in the mode register and then read
+   * back the mode register to check it's zeroed (ie reset complete.)
+   *
+   * If we don't get a zero back, assume we have a W5200 in which case
+   * we're in the middle of a register read. Finish the request that
+   * we've accidentally given it.
+   */
+
+  //initSS();
+  //resetSS();
+  SPI.begin();
+  setSS();
+
+  // W5100 reset sequence. On W5200 this is interpreted as a request to read 128 bytes from 0xF000!
+  SPI.transfer(W5100_WRITE_FLAG);
+  SPI.transfer(0);
+  SPI.transfer(0);
+  SPI.transfer(_BV(WiznetModule::RST));
+
+  delay(100);
+  // W5100 read mode register. On W5200 this is interpreted as the first 4/128 bytes read
+  SPI.transfer(W5100_READ_FLAG);
+  SPI.transfer(0);
+  SPI.transfer(0);
+  uint8_t mode_value = SPI.transfer(0);
+
+  Serial.print("mode 0x");
+  Serial.println(mode_value, HEX);
+
+  WiznetModule *result;
+  if(mode_value == 0) {
+    result = new W5100Module();
+  }
+  else { // This isn't a W5100, so finish the W5200 read transfer that's in progress
+    for(int i = 0; i < _BV(WiznetModule::RST)-4; i++)
+      SPI.transfer(0);
+    result = new W5200Module();
+  }
+  resetSS();
+  return result;
+}
 
 void WiznetModule::init()
 {
@@ -37,6 +103,7 @@ void W5200Module::init()
     write(get_chbase() + i * 0x100 + 0x001F, 2);
     write(get_chbase() + i * 0x100 + 0x001E, 2);
   }
+  Serial.println("W5200::init");
 }
 
 void W5100Module::init()
@@ -44,6 +111,7 @@ void W5100Module::init()
   WiznetModule::init();
   writeTMSR(0x55);
   writeRMSR(0x55);
+  Serial.println("W5100::init");
 }
 
 uint16_t WiznetModule::getTXFreeSize(SOCKET s){
@@ -138,7 +206,7 @@ uint8_t W5200Module::write(uint16_t _addr, uint8_t _data)
   setSS();
   SPI.transfer(_addr >> 8);
   SPI.transfer(_addr & 0xFF);
-  SPI.transfer(0x80);
+  SPI.transfer(W5200_WRITE_FLAG);
   SPI.transfer(0x01);
   SPI.transfer(_data);
   resetSS();
@@ -148,7 +216,7 @@ uint8_t W5200Module::write(uint16_t _addr, uint8_t _data)
 uint8_t W5100Module::write(uint16_t _addr, uint8_t _data)
 {
   setSS();
-  SPI.transfer(0xF0);
+  SPI.transfer(W5100_WRITE_FLAG);
   SPI.transfer(_addr >> 8);
   SPI.transfer(_addr & 0xFF);
   SPI.transfer(_data);
@@ -161,8 +229,8 @@ uint16_t W5200Module::write(uint16_t _addr, const uint8_t *_buf, uint16_t _len)
   setSS();
   SPI.transfer(_addr >> 8);
   SPI.transfer(_addr & 0xFF);
-  SPI.transfer((0x80 | ((_len & 0x7F00) >> 8)));
-  SPI.transfer(_len & 0x00FF);
+  SPI.transfer(W5200_WRITE_FLAG | ((_len & 0x7F00) >> 8));
+  SPI.transfer(_len & 0xFF);
   for (uint16_t i=0; i<_len; i++) {
     SPI.transfer(_buf[i]);
   }
@@ -175,7 +243,7 @@ uint16_t W5100Module::write(uint16_t _addr, const uint8_t *_buf, uint16_t _len)
   for (uint16_t i=0; i<_len; i++)
   {
     setSS();
-    SPI.transfer(0xF0);
+    SPI.transfer(W5100_WRITE_FLAG);
     SPI.transfer(_addr >> 8);
     SPI.transfer(_addr & 0xFF);
     _addr++;
@@ -190,7 +258,7 @@ uint8_t W5200Module::read(uint16_t _addr)
   setSS();
   SPI.transfer(_addr >> 8);
   SPI.transfer(_addr & 0xFF);
-  SPI.transfer(0x00);
+  SPI.transfer(W5200_READ_FLAG);
   SPI.transfer(0x01);
 
   uint8_t _data = SPI.transfer(0);
@@ -201,7 +269,7 @@ uint8_t W5200Module::read(uint16_t _addr)
 uint8_t W5100Module::read(uint16_t _addr)
 {
   setSS();
-  SPI.transfer(0x0F);
+  SPI.transfer(W5100_READ_FLAG);
   SPI.transfer(_addr >> 8);
   SPI.transfer(_addr & 0xFF);
 
@@ -215,8 +283,8 @@ uint16_t W5200Module::read(uint16_t _addr, uint8_t *_buf, uint16_t _len)
   setSS();
   SPI.transfer(_addr >> 8);
   SPI.transfer(_addr & 0xFF);
-  SPI.transfer((0x00 | ((_len & 0x7F00) >> 8)));
-  SPI.transfer(_len & 0x00FF);
+  SPI.transfer(W5200_READ_FLAG | ((_len & 0x7F00) >> 8));
+  SPI.transfer(_len & 0xFF);
   for (uint16_t i=0; i<_len; i++)
   {
     _buf[i] = SPI.transfer(0);
@@ -231,7 +299,7 @@ uint16_t W5100Module::read(uint16_t _addr, uint8_t *_buf, uint16_t _len)
   for (uint16_t i=0; i<_len; i++)
   {
     setSS();
-    SPI.transfer(0x0F);
+    SPI.transfer(W5100_READ_FLAG);
     SPI.transfer(_addr >> 8);
     SPI.transfer(_addr & 0xFF);
     _addr++;

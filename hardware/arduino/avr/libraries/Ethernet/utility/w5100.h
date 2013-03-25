@@ -129,6 +129,13 @@ public:
 class  WiznetModule {
 
 public:
+  /**
+   * @brief Automatically detect a W5100 or W5200, and return the appropriate instance.
+   *
+   * The returned object will already be initialised, you don't need to call init() on it
+   * Although this won't hurt.
+   */
+  static WiznetModule *autodetect();
   virtual void init();
 
   /**
@@ -244,9 +251,10 @@ public:
   __GP_REGISTER8 (PTIMER, 0x0028);    // PPP LCP Request Timer
   __GP_REGISTER8 (PMAGIC, 0x0029);    // PPP LCP Magic Number
 
+  static const uint8_t  RST = 7; // Reset BIT
+private:
   // W5100 Socket registers
   // ----------------------
-private:
   inline uint8_t readSn(SOCKET _s, uint16_t _addr);
   inline uint8_t writeSn(SOCKET _s, uint16_t _addr, uint8_t _data);
   inline uint16_t readSn(SOCKET _s, uint16_t _addr, uint8_t *_buf, uint16_t len);
@@ -307,8 +315,6 @@ public:
 
 
 private:
-  static const uint8_t  RST = 7; // Reset BIT
-
   static const uint16_t SMASK = 0x07FF; // Tx buffer MASK
   static const uint16_t RMASK = 0x07FF; // Rx buffer MASK
 public:
@@ -378,7 +384,12 @@ protected:
 };
 
 
-extern W5200Module W5100;
+// Call this function before calling any methods on the W5100 reference below
+// (it will autodetect a W5100 or W5200, and initialise the WiznetModule instance
+// appropriately.)
+void initialise_wiznet_instance();
+
+extern WiznetModule &W5100;
 
 uint8_t WiznetModule::readSn(SOCKET _s, uint16_t _addr) {
   return read(get_chbase() + _s * CH_SIZE + _addr);
