@@ -16,9 +16,9 @@ int EthernetClass::begin(uint8_t *mac_address)
 
   // Initialise the basic info
   initialise_wiznet_instance();
-  W5100.init();
-  W5100.setMACAddress(mac_address);
-  W5100.setIPAddress(IPAddress(0,0,0,0).raw_address());
+  WiznetInstance->init();
+  WiznetInstance->setMACAddress(mac_address);
+  WiznetInstance->setIPAddress(IPAddress(0,0,0,0).raw_address());
 
   // Now try to get our config info from a DHCP server
   int ret = _dhcp->beginWithDHCP(mac_address);
@@ -26,9 +26,9 @@ int EthernetClass::begin(uint8_t *mac_address)
   {
     // We've successfully found a DHCP server and got our configuration info, so set things
     // accordingly
-    W5100.setIPAddress(_dhcp->getLocalIp().raw_address());
-    W5100.setGatewayIp(_dhcp->getGatewayIp().raw_address());
-    W5100.setSubnetMask(_dhcp->getSubnetMask().raw_address());
+    WiznetInstance->setIPAddress(_dhcp->getLocalIp().raw_address());
+    WiznetInstance->setGatewayIp(_dhcp->getGatewayIp().raw_address());
+    WiznetInstance->setSubnetMask(_dhcp->getSubnetMask().raw_address());
     _dnsServerAddress = _dhcp->getDnsServerIp();
   }
 
@@ -62,11 +62,11 @@ void EthernetClass::begin(uint8_t *mac_address, IPAddress local_ip, IPAddress dn
 void EthernetClass::begin(uint8_t *mac, IPAddress local_ip, IPAddress dns_server, IPAddress gateway, IPAddress subnet)
 {
   initialise_wiznet_instance();
-  W5100.init();
-  W5100.setMACAddress(mac);
-  W5100.setIPAddress(local_ip._address);
-  W5100.setGatewayIp(gateway._address);
-  W5100.setSubnetMask(subnet._address);
+  WiznetInstance->init();
+  WiznetInstance->setMACAddress(mac);
+  WiznetInstance->setIPAddress(local_ip._address);
+  WiznetInstance->setGatewayIp(gateway._address);
+  WiznetInstance->setSubnetMask(subnet._address);
   _dnsServerAddress = dns_server;
 }
 
@@ -82,9 +82,9 @@ int EthernetClass::maintain(){
       case DHCP_CHECK_RENEW_OK:
       case DHCP_CHECK_REBIND_OK:
         //we might have got a new IP.
-        W5100.setIPAddress(_dhcp->getLocalIp().raw_address());
-        W5100.setGatewayIp(_dhcp->getGatewayIp().raw_address());
-        W5100.setSubnetMask(_dhcp->getSubnetMask().raw_address());
+        WiznetInstance->setIPAddress(_dhcp->getLocalIp().raw_address());
+        WiznetInstance->setGatewayIp(_dhcp->getGatewayIp().raw_address());
+        WiznetInstance->setSubnetMask(_dhcp->getSubnetMask().raw_address());
         _dnsServerAddress = _dhcp->getDnsServerIp();
         break;
       default:
@@ -98,21 +98,21 @@ int EthernetClass::maintain(){
 IPAddress EthernetClass::localIP()
 {
   IPAddress ret;
-  W5100.getIPAddress(ret.raw_address());
+  WiznetInstance->getIPAddress(ret.raw_address());
   return ret;
 }
 
 IPAddress EthernetClass::subnetMask()
 {
   IPAddress ret;
-  W5100.getSubnetMask(ret.raw_address());
+  WiznetInstance->getSubnetMask(ret.raw_address());
   return ret;
 }
 
 IPAddress EthernetClass::gatewayIP()
 {
   IPAddress ret;
-  W5100.getGatewayIp(ret.raw_address());
+  WiznetInstance->getGatewayIp(ret.raw_address());
   return ret;
 }
 

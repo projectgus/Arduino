@@ -17,18 +17,10 @@
 #include "w5100.h"
 
 // W5x00 controller instance, do not access before calling initialise_wiznet_instance()
-const size_t sizeof_wiznetmodule = max(sizeof(W5100Module), sizeof(W5200Module));
-uint8_t _w5100_storage[sizeof_wiznetmodule];
-WiznetModule &W5100 = *((WiznetModule *)_w5100_storage);
+WiznetModule *WiznetInstance;
 
 void initialise_wiznet_instance() {
-  // This is pretty hacky. In order to avoid changing W5100 to a
-  // pointer type we just copy our heap-allocated WiznetModule
-  // instance into the W5100 object's storage space, then delete the
-  // heap-allocated version.
-  WiznetModule *w5100_ptr = WiznetModule::autodetect();
-  memcpy(_w5100_storage, w5100_ptr, sizeof(WiznetModule));
-  delete w5100_ptr;
+  WiznetInstance = WiznetModule::autodetect();
 }
 
 const uint8_t W5200_WRITE_FLAG = 0x80;

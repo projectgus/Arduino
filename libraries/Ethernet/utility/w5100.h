@@ -253,9 +253,9 @@ public:
   __GP_REGISTER8 (PTIMER, 0x0028);    // PPP LCP Request Timer
   __GP_REGISTER8 (PMAGIC, 0x0029);    // PPP LCP Magic Number
 
-  static const uint8_t  RST = _BV(7); // Mode reset BIT
-  static const uint8_t  PINGBLOCK = _BV(4); // Mode reset BIT
-  static const uint8_t  PPOE = _BV(3); // Mode reset BIT
+  static const uint8_t  RST = 1<<7; // Mode reset BIT
+  static const uint8_t  PINGBLOCK = 1<<4; // Mode reset BIT
+  static const uint8_t  PPOE = 1<<3; // Mode reset BIT
 private:
   // W5100 Socket registers
   // ----------------------
@@ -397,7 +397,7 @@ protected:
 // appropriately.)
 void initialise_wiznet_instance();
 
-extern WiznetModule &W5100;
+extern WiznetModule *WiznetInstance;
 
 uint8_t WiznetModule::readSn(SOCKET _s, uint16_t _addr) {
   return read(get_chbase() + _s * CH_SIZE + _addr);
