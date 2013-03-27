@@ -253,7 +253,9 @@ public:
   __GP_REGISTER8 (PTIMER, 0x0028);    // PPP LCP Request Timer
   __GP_REGISTER8 (PMAGIC, 0x0029);    // PPP LCP Magic Number
 
-  static const uint8_t  RST = 7; // Reset BIT
+  static const uint8_t  RST = _BV(7); // Mode reset BIT
+  static const uint8_t  PINGBLOCK = _BV(4); // Mode reset BIT
+  static const uint8_t  PPOE = _BV(3); // Mode reset BIT
 private:
   // W5100 Socket registers
   // ----------------------
@@ -263,6 +265,8 @@ private:
   inline uint16_t writeSn(SOCKET _s, uint16_t _addr, uint8_t *_buf, uint16_t len);
 
   static const uint16_t CH_SIZE = 0x0100;
+
+  static uint8_t exploratory_modewrite(uint8_t);
 
 private:
 

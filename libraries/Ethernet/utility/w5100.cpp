@@ -26,7 +26,6 @@ void initialise_wiznet_instance() {
   // pointer type we just copy our heap-allocated WiznetModule
   // instance into the W5100 object's storage space, then delete the
   // heap-allocated version.
-  Serial.println("initialise_wiznet_instance");
   WiznetModule *w5100_ptr = WiznetModule::autodetect();
   memcpy(_w5100_storage, w5100_ptr, sizeof(WiznetModule));
   delete w5100_ptr;
@@ -70,8 +69,8 @@ WiznetModule *WiznetModule::autodetect()
    */
 
 #ifdef __AVR__
-  //initSS();
-  //resetSS();
+  initSS();
+  resetSS();
   SPI.begin();
 #else // ARM
   SPI.begin(SPI_CS);
@@ -80,36 +79,53 @@ WiznetModule *WiznetModule::autodetect()
   SPI.setDataMode(SPI_CS, SPI_MODE0);
 #endif
 
-  // W5100 reset sequence. On W5200 this is interpreted as a request to read 128 bytes from 0xF000!
+  // To check for W5100, send a sequence of mode bits and check we read
+  // back consistent mode bit values in all cases (for W5200 this will just
+  // be reading the same memory address over and over, so result shouldn't change.)
+  bool is_w5100 = exploratory_modewrite(RST) == 0
+    && exploratory_modewrite(PINGBLOCK) == PINGBLOCK
+    && exploratory_modewrite(PPOE) == PPOE
+    && exploratory_modewrite(RST|PPOE) == 0;
+
+  if(is_w5100)
+    return new W5100Module();
+  else
+    return new W5200Module();
+}
+
+uint8_t WiznetModule::exploratory_modewrite(uint8_t mode_value)
+{
+  /* Writes and then reads back the mode register on W5100
+     However, assumes device type is unknown and may be W5200,
+     so the device also reads back additional bytes as if the same
+     command had been sent to W5200 (to ensure a consistent device state)
+  */
+
+  // W5100 mode write sequence, on W5200 this is interpreted as a request
+  // to read 'mode_value' bytes from address 0xF000
   setSS();
   _spi_transfer(W5100_WRITE_FLAG,       SPI_CONTINUE);
   _spi_transfer(0,                      SPI_CONTINUE);
   _spi_transfer(0,                      SPI_CONTINUE);
-  _spi_transfer(_BV(WiznetModule::RST), SPI_CONTINUE);
-
-  delay(100);
-  // W5100 read mode register. On W5200 this is interpreted as the first 4/128 bytes read
-  _spi_transfer(W5100_READ_FLAG,        SPI_CONTINUE);
-  _spi_transfer(0,                      SPI_CONTINUE);
-  _spi_transfer(0,                      SPI_CONTINUE);
-  uint8_t mode_value = _spi_transfer(0, SPI_LAST);
-
-  // TODO: Test if releasing CS here causes W5200 to be unhappy
-  // (otherwise, should be safe to hold it on W5100 all the way until init()
-
-  Serial.print("mode 0x");
-  Serial.println(mode_value, HEX);
-
-  WiznetModule *result;
-  if(mode_value == 0) {
-    result = new W5100Module();
-  }
-  else { // This isn't a W5100, so finish the W5200 read transfer that's in progress
-    for(int i = 4; i < _BV(WiznetModule::RST); i++)
-      _spi_transfer(0,  i == _BV(WiznetModule::RST)-1 ? SPI_LAST : SPI_CONTINUE);
-    result = new W5200Module();
-  }
+  _spi_transfer(mode_value, SPI_LAST);
   resetSS();
+
+  // Read back the value, on W5200 this is interpreted as the first 4
+  // reads from the sequence.
+  setSS();
+  _spi_transfer(W5100_READ_FLAG,       SPI_CONTINUE);
+  _spi_transfer(0,                      SPI_CONTINUE);
+  _spi_transfer(0,                      SPI_CONTINUE);
+  uint8_t result = _spi_transfer(0, SPI_LAST);
+  resetSS();
+
+  // In case this is a W5200, complete the read cycles for the
+  // device (NOPs on W5100 as no command flag will be sent)
+  setSS();
+  for(uint8_t i = 4; i < mode_value; i++)
+    _spi_transfer(0, SPI_LAST);
+  resetSS();
+
   return result;
 }
 
@@ -127,17 +143,16 @@ void WiznetModule::init()
   SPI.setDataMode(SPI_CS, SPI_MODE0);
 #endif
 
-  writeMR(1<<RST);
+  writeMR(WiznetModule::RST);
 }
 
 void W5200Module::init()
 {
   WiznetModule::init();
-  for (int i=0; i< get_max_sockets() ; i++) {
+  for (uint8_t i=0; i< get_max_sockets() ; i++) {
     write(get_chbase() + i * 0x100 + 0x001F, 2);
     write(get_chbase() + i * 0x100 + 0x001E, 2);
   }
-  Serial.println("W5200::init");
 }
 
 void W5100Module::init()
@@ -145,7 +160,6 @@ void W5100Module::init()
   WiznetModule::init();
   writeTMSR(0x55);
   writeRMSR(0x55);
-  Serial.println("W5100::init");
 }
 
 uint16_t WiznetModule::getTXFreeSize(SOCKET s){
