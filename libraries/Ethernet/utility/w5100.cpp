@@ -10,7 +10,6 @@
 #include <stdio.h>
 #include <string.h>
 #ifdef __AVR__
-#include <new.h>
 #include <avr/interrupt.h>
 #endif
 
@@ -47,6 +46,21 @@ inline static uint8_t _spi_transfer(uint8_t _data, SPITransferMode _mode) {
 }
 #endif
 
+// This function is used instead of 'new'
+//
+// Reason: On the Due calling 'new' pulls in ~50k of stdlibcpp stuff
+// that we don't really need. This function avoids that need.
+//
+// (this function is hacky and will only work if the object has a
+// default constructor -and- no destructor, but it's safe in those
+// instances.)
+template<typename T> static inline T* instantiate()
+{
+  T mod;
+  T *result = (T *)malloc(sizeof(T));
+  memcpy(result, (void*)&mod, sizeof(T));
+  return result;
+}
 
 WiznetModule *WiznetModule::autodetect()
 {
@@ -79,10 +93,14 @@ WiznetModule *WiznetModule::autodetect()
     && exploratory_modewrite(PPOE) == PPOE
     && exploratory_modewrite(RST|PPOE) == 0;
 
-  if(is_w5100)
-    return new W5100Module();
-  else
-    return new W5200Module();
+  WiznetModule *result;
+  if(is_w5100) {
+    return instantiate<W5100Module>();
+  }
+  else {
+    return instantiate<W5200Module>();
+  }
+  return result;
 }
 
 uint8_t WiznetModule::exploratory_modewrite(uint8_t mode_value)
