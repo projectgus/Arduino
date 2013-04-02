@@ -9,8 +9,10 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <avr/interrupt.h>
+#ifdef __AVR__
 #include <new.h>
+#include <avr/interrupt.h>
+#endif
 
 #include "w5100.h"
 
@@ -40,6 +42,21 @@ const uint8_t W5100_READ_FLAG = 0x0F;
 #define TX_BUF 0x1100
 #define RX_BUF (TX_BUF + TX_RX_MAX_BUF_SIZE)
 
+#ifdef __AVR__
+#define SPI_CONTINUE 0
+#define SPI_LAST     0
+inline static uint8_t _spi_transfer(uint8_t _data, uint8_t _mode) {
+  return SPI.transfer(_data);
+}
+
+#else // ARM
+#define SPI_CS 10
+inline static uint8_t _spi_transfer(uint8_t _data, SPITransferMode _mode) {
+  return SPI.transfer(SPI_CS, _data, _mode);
+}
+#endif
+
+
 WiznetModule *WiznetModule::autodetect()
 {
   /* Method
@@ -52,23 +69,33 @@ WiznetModule *WiznetModule::autodetect()
    * we've accidentally given it.
    */
 
+#ifdef __AVR__
   //initSS();
   //resetSS();
   SPI.begin();
-  setSS();
+#else // ARM
+  SPI.begin(SPI_CS);
+  // Set clock to 4Mhz (W5100 should support up to about 14Mhz)
+  SPI.setClockDivider(SPI_CS, 21);
+  SPI.setDataMode(SPI_CS, SPI_MODE0);
+#endif
 
   // W5100 reset sequence. On W5200 this is interpreted as a request to read 128 bytes from 0xF000!
-  SPI.transfer(W5100_WRITE_FLAG);
-  SPI.transfer(0);
-  SPI.transfer(0);
-  SPI.transfer(_BV(WiznetModule::RST));
+  setSS();
+  _spi_transfer(W5100_WRITE_FLAG,       SPI_CONTINUE);
+  _spi_transfer(0,                      SPI_CONTINUE);
+  _spi_transfer(0,                      SPI_CONTINUE);
+  _spi_transfer(_BV(WiznetModule::RST), SPI_CONTINUE);
 
   delay(100);
   // W5100 read mode register. On W5200 this is interpreted as the first 4/128 bytes read
-  SPI.transfer(W5100_READ_FLAG);
-  SPI.transfer(0);
-  SPI.transfer(0);
-  uint8_t mode_value = SPI.transfer(0);
+  _spi_transfer(W5100_READ_FLAG,        SPI_CONTINUE);
+  _spi_transfer(0,                      SPI_CONTINUE);
+  _spi_transfer(0,                      SPI_CONTINUE);
+  uint8_t mode_value = _spi_transfer(0, SPI_LAST);
+
+  // TODO: Test if releasing CS here causes W5200 to be unhappy
+  // (otherwise, should be safe to hold it on W5100 all the way until init()
 
   Serial.print("mode 0x");
   Serial.println(mode_value, HEX);
@@ -78,8 +105,8 @@ WiznetModule *WiznetModule::autodetect()
     result = new W5100Module();
   }
   else { // This isn't a W5100, so finish the W5200 read transfer that's in progress
-    for(int i = 0; i < _BV(WiznetModule::RST)-4; i++)
-      SPI.transfer(0);
+    for(int i = 4; i < _BV(WiznetModule::RST); i++)
+      _spi_transfer(0,  i == _BV(WiznetModule::RST)-1 ? SPI_LAST : SPI_CONTINUE);
     result = new W5200Module();
   }
   resetSS();
@@ -90,8 +117,15 @@ void WiznetModule::init()
 {
   delay(300);
 
+#ifdef __AVR__
   SPI.begin();
   initSS();
+#else // ARM
+  SPI.begin(SPI_CS);
+  // Set clock to 4Mhz (W5100 should support up to about 14Mhz)
+  SPI.setClockDivider(SPI_CS, 21);
+  SPI.setDataMode(SPI_CS, SPI_MODE0);
+#endif
 
   writeMR(1<<RST);
 }
@@ -172,7 +206,7 @@ void WiznetModule::recv_data_processing(SOCKET s, uint8_t *data, uint16_t len, u
 {
   uint16_t ptr;
   ptr = readSnRX_RD(s);
-  read_data(s, (uint8_t *)ptr, data, len);
+  read_data(s, ptr, data, len);
   if (!peek)
   {
     ptr += len;
@@ -180,13 +214,13 @@ void WiznetModule::recv_data_processing(SOCKET s, uint8_t *data, uint16_t len, u
   }
 }
 
-void WiznetModule::read_data(SOCKET s, volatile uint8_t *src, volatile uint8_t *dst, uint16_t len)
+void WiznetModule::read_data(SOCKET s, volatile uint16_t src, volatile uint8_t *dst, uint16_t len)
 {
   uint16_t size;
   uint16_t src_mask;
   uint16_t src_ptr;
 
-  src_mask = (uint16_t)src & RMASK;
+  src_mask = src & RMASK;
   src_ptr = get_sock_rx_addr(s) + src_mask;
 
   if( (src_mask + len) > RSIZE )
@@ -204,11 +238,11 @@ void WiznetModule::read_data(SOCKET s, volatile uint8_t *src, volatile uint8_t *
 uint8_t W5200Module::write(uint16_t _addr, uint8_t _data)
 {
   setSS();
-  SPI.transfer(_addr >> 8);
-  SPI.transfer(_addr & 0xFF);
-  SPI.transfer(W5200_WRITE_FLAG);
-  SPI.transfer(0x01);
-  SPI.transfer(_data);
+  _spi_transfer(_addr >> 8,       SPI_CONTINUE);
+  _spi_transfer(_addr & 0xFF,     SPI_CONTINUE);
+  _spi_transfer(W5200_WRITE_FLAG, SPI_CONTINUE);
+  _spi_transfer(0x01,             SPI_CONTINUE);
+  _spi_transfer(_data,            SPI_LAST);
   resetSS();
   return 1;
 }
@@ -216,10 +250,10 @@ uint8_t W5200Module::write(uint16_t _addr, uint8_t _data)
 uint8_t W5100Module::write(uint16_t _addr, uint8_t _data)
 {
   setSS();
-  SPI.transfer(W5100_WRITE_FLAG);
-  SPI.transfer(_addr >> 8);
-  SPI.transfer(_addr & 0xFF);
-  SPI.transfer(_data);
+  _spi_transfer(W5100_WRITE_FLAG,  SPI_CONTINUE);
+  _spi_transfer(_addr >> 8,        SPI_CONTINUE);
+  _spi_transfer(_addr & 0xFF,      SPI_CONTINUE);
+  _spi_transfer(_data,             SPI_LAST);
   resetSS();
   return 1;
 }
@@ -227,12 +261,12 @@ uint8_t W5100Module::write(uint16_t _addr, uint8_t _data)
 uint16_t W5200Module::write(uint16_t _addr, const uint8_t *_buf, uint16_t _len)
 {
   setSS();
-  SPI.transfer(_addr >> 8);
-  SPI.transfer(_addr & 0xFF);
-  SPI.transfer(W5200_WRITE_FLAG | ((_len & 0x7F00) >> 8));
-  SPI.transfer(_len & 0xFF);
+  _spi_transfer(_addr >> 8,                                SPI_CONTINUE);
+  _spi_transfer(_addr & 0xFF,                              SPI_CONTINUE);
+  _spi_transfer(W5200_WRITE_FLAG | ((_len & 0x7F00) >> 8), SPI_CONTINUE);
+  _spi_transfer(_len & 0xFF,                               SPI_CONTINUE);
   for (uint16_t i=0; i<_len; i++) {
-    SPI.transfer(_buf[i]);
+    _spi_transfer(_buf[i], i==_len-1 ? SPI_LAST : SPI_CONTINUE);
   }
   resetSS();
   return _len;
@@ -243,11 +277,11 @@ uint16_t W5100Module::write(uint16_t _addr, const uint8_t *_buf, uint16_t _len)
   for (uint16_t i=0; i<_len; i++)
   {
     setSS();
-    SPI.transfer(W5100_WRITE_FLAG);
-    SPI.transfer(_addr >> 8);
-    SPI.transfer(_addr & 0xFF);
+    _spi_transfer(W5100_WRITE_FLAG,    SPI_CONTINUE);
+    _spi_transfer(_addr >> 8,          SPI_CONTINUE);
+    _spi_transfer(_addr & 0xFF,        SPI_CONTINUE);
     _addr++;
-    SPI.transfer(_buf[i]);
+    _spi_transfer(_buf[i],             SPI_LAST);
     resetSS();
   }
   return _len;
@@ -256,12 +290,12 @@ uint16_t W5100Module::write(uint16_t _addr, const uint8_t *_buf, uint16_t _len)
 uint8_t W5200Module::read(uint16_t _addr)
 {
   setSS();
-  SPI.transfer(_addr >> 8);
-  SPI.transfer(_addr & 0xFF);
-  SPI.transfer(W5200_READ_FLAG);
-  SPI.transfer(0x01);
+  _spi_transfer(_addr >> 8,            SPI_CONTINUE);
+  _spi_transfer(_addr & 0xFF,          SPI_CONTINUE);
+  _spi_transfer(W5200_READ_FLAG,       SPI_CONTINUE);
+  _spi_transfer(0x01,                  SPI_CONTINUE);
 
-  uint8_t _data = SPI.transfer(0);
+  uint8_t _data = _spi_transfer(0,     SPI_LAST);
   resetSS();
   return _data;
 }
@@ -269,11 +303,11 @@ uint8_t W5200Module::read(uint16_t _addr)
 uint8_t W5100Module::read(uint16_t _addr)
 {
   setSS();
-  SPI.transfer(W5100_READ_FLAG);
-  SPI.transfer(_addr >> 8);
-  SPI.transfer(_addr & 0xFF);
+  _spi_transfer(W5100_READ_FLAG,       SPI_CONTINUE);
+  _spi_transfer(_addr >> 8,            SPI_CONTINUE);
+  _spi_transfer(_addr & 0xFF,          SPI_CONTINUE);
 
-  uint8_t _data = SPI.transfer(0);
+  uint8_t _data = _spi_transfer(0,     SPI_LAST);
   resetSS();
   return _data;
 }
@@ -281,13 +315,13 @@ uint8_t W5100Module::read(uint16_t _addr)
 uint16_t W5200Module::read(uint16_t _addr, uint8_t *_buf, uint16_t _len)
 {
   setSS();
-  SPI.transfer(_addr >> 8);
-  SPI.transfer(_addr & 0xFF);
-  SPI.transfer(W5200_READ_FLAG | ((_len & 0x7F00) >> 8));
-  SPI.transfer(_len & 0xFF);
+  _spi_transfer(_addr >> 8,                               SPI_CONTINUE);
+  _spi_transfer(_addr & 0xFF,                             SPI_CONTINUE);
+  _spi_transfer(W5200_READ_FLAG | ((_len & 0x7F00) >> 8), SPI_CONTINUE);
+  _spi_transfer(_len & 0xFF,                              SPI_CONTINUE);
   for (uint16_t i=0; i<_len; i++)
   {
-    _buf[i] = SPI.transfer(0);
+    _buf[i] = _spi_transfer(0, i==_len-1 ? SPI_LAST : SPI_CONTINUE);
   }
   resetSS();
   return _len;
@@ -299,11 +333,11 @@ uint16_t W5100Module::read(uint16_t _addr, uint8_t *_buf, uint16_t _len)
   for (uint16_t i=0; i<_len; i++)
   {
     setSS();
-    SPI.transfer(W5100_READ_FLAG);
-    SPI.transfer(_addr >> 8);
-    SPI.transfer(_addr & 0xFF);
+    _spi_transfer(W5100_READ_FLAG,    SPI_CONTINUE);
+    _spi_transfer(_addr >> 8,         SPI_CONTINUE);
+    _spi_transfer(_addr & 0xFF,       SPI_CONTINUE);
     _addr++;
-    _buf[i] = SPI.transfer(0);
+    _buf[i] = _spi_transfer(0,        SPI_LAST);
     resetSS();
   }
   return _len;
